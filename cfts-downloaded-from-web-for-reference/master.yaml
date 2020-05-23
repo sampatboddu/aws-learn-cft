@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Template to create AWS BikeNow demo
+Parameters:
+  EnvironmentName:
+    Description: Environment stage name
+    Type: String
+    Default: demo
+  BikeStationStatusUrl:
+    Description: URL for retrieving Citi Bike station data
+    Type: String
+    Default: https://gbfs.citibikenyc.com/gbfs/en/station_status.json
+  BikeStationDetailUrl:
+    Description: URL for retrieving Citi Bike station meta data
+    Type: String
+    Default: https://gbfs.citibikenyc.com/gbfs/en/station_information.json
+  StationStatusTable:
+    Description: DynamoDB table name where we store bike station status
+    Type: String
+    Default: station_status
+  StationDetailTable:
+    Description: DynamoDB table name where we store bike station details
+    Type: String
+    Default: station_detail
+  ElasticsearchDomainName:
+    Description: Amazon Elasticsearch domain name
+    Type: String
+    Default: bikenow
+  GlueDatabaseName:
+    Description: Name of AWS Glue database
+    Type: String
+    Default: bikenow_db
+  RedshiftDbName:
+    Description: Name of Redshift database
+    Type: String
+    Default: bikenowdw
+  AuroraDbName:
+    Description: Name of Amazon Aurora database
+    Type: String
+    Default: bikenowrds
+Resources:
+  ApplicationInitialize:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: https://s3.amazonaws.com/aws-bikenow-demo-us-east-1/92d34d00ab87db291232ce7f1cadecce.template
+  ApplicationNetwork:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: https://s3.amazonaws.com/aws-bikenow-demo-us-east-1/33d839b6d48851a2ee4aac565e266bd5.template
+  ApplicationDatabase:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: https://s3.amazonaws.com/aws-bikenow-demo-us-east-1/cfa13c656f4a46189ec8efec5b3da7db.template
+      Parameters:
+        EnvironmentName:
+          Ref: EnvironmentName
+        BikeStationStatusUrl:
+          Ref: BikeStationStatusUrl
+        BikeStationDetailUrl:
+          Ref: BikeStationDetailUrl
+        StationStatusTable:
+          Ref: StationStatusTable
+        StationDetailTable:
+          Ref: StationDetailTable
+        ElasticsearchDomainName:
+          Ref: ElasticsearchDomainName
+        VpcId:
+          Fn::GetAtt:
+          - ApplicationNetwork
+          - Outputs.VPC
+        SubnetsPrivate:
+          Fn::GetAtt:
+          - ApplicationNetwork
+          - Outputs.SubnetsPrivate
+        AuroraDbName:
+          Ref: AuroraDbName
+  ApplicationAnalytics:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: https://s3.amazonaws.com/aws-bikenow-demo-us-east-1/5d689b89063cfb4d0546fcc9503198c7.template
+      Parameters:
+        GlueDatabaseName:
+          Ref: GlueDatabaseName
+        StationStatusStreamArn:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.StreamTableStationStatusArn
+        StationDetailStreamArn:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.StreamTableStationDetailArn
+        RedshiftVPC:
+          Fn::GetAtt:
+          - ApplicationNetwork
+          - Outputs.VPC
+        RedshiftSubnets:
+          Fn::GetAtt:
+          - ApplicationNetwork
+          - Outputs.SubnetsPrivate
+        RedshiftAZ:
+          Fn::GetAtt:
+          - ApplicationNetwork
+          - Outputs.AZA
+        RedshiftDbName:
+          Ref: RedshiftDbName
+        ArtifactsBucket:
+          Fn::GetAtt:
+          - ApplicationInitialize
+          - Outputs.ArtifactsBucket
+  ApplicationAIML:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: https://s3.amazonaws.com/aws-bikenow-demo-us-east-1/269ae967886312fa130a773496e88247.template
+      Parameters:
+        ArtifactsBucket:
+          Fn::GetAtt:
+          - ApplicationInitialize
+          - Outputs.ArtifactsBucket
+        DataLakeS3Bucket:
+          Fn::GetAtt:
+          - ApplicationAnalytics
+          - Outputs.DataLakeS3Bucket
+        GlueEndpointName:
+          Fn::GetAtt:
+          - ApplicationAnalytics
+          - Outputs.GlueEndpointName
+        EnvironmentName:
+          Ref: EnvironmentName
+  ApplicationCodeBuild:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: https://s3.amazonaws.com/aws-bikenow-demo-us-east-1/ecbe3def756cf1adece498e285cca5ee.template
+      Parameters:
+        EnvironmentName:
+          Ref: EnvironmentName
+        S3BucketWeb:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.S3BucketWeb
+        ApiDatabase:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.ApiGatewayWebId
+        ApiAiml:
+          Fn::GetAtt:
+          - ApplicationAIML
+          - Outputs.ApiGatewayModelId
+        CognitoUserPool:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.CognitoUserPoolId
+        CognitoUserPoolClient:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.CognitoAppClientId
+        CognityIdentityPool:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.CognityIdentityPoolId
+        WebsiteCDN:
+          Fn::GetAtt:
+          - ApplicationDatabase
+          - Outputs.WebsiteCDN
+Outputs:
+  BikenowApiUrl:
+    Value:
+      Fn::Sub: https://${ApplicationDatabase.Outputs.ApiGatewayWebId}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}
+    Description: URL of BikeNow purpose-built database demo API Gateway
+  AimlApiUrl:
+    Value:
+      Fn::Sub: https://${ApplicationAIML.Outputs.ApiGatewayModelId}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}
+    Description: URL of BikeNow AI/ML demo API Gateway
+  CognitoUserPoolId:
+    Value:
+      Fn::GetAtt:
+      - ApplicationDatabase
+      - Outputs.CognitoUserPoolId
+    Description: Cognito user pool ID
+  CognitoAppClientId:
+    Value:
+      Fn::GetAtt:
+      - ApplicationDatabase
+      - Outputs.CognitoAppClientId
+    Description: Cognito application client ID
+  CognityIdentityPoolId:
+    Value:
+      Fn::GetAtt:
+      - ApplicationDatabase
+      - Outputs.CognityIdentityPoolId
+    Description: Cognity identity pool ID
+  WebsiteURL:
+    Value:
+      Fn::GetAtt:
+      - ApplicationDatabase
+      - Outputs.WebsiteURL
+    Description: The URL for the web application
